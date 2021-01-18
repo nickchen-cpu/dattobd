@@ -52,11 +52,10 @@ struct setup_params_group{
 	struct setup_params setup_params[];
 };
 
-/*struct reload_params_group{
+struct reload_params_group{
 	unsigned int count;
 	struct reload_params reload_params[];
 };
-*/
 struct transition_snap_params_group{
 	unsigned int count;
 	struct transition_snap_params transition_snap_params[];
