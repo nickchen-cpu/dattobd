@@ -116,7 +116,7 @@ static int handle_setup_snap(int argc, char **argv){
 
 	bdev = argv[optind];
 	cow = argv[optind + 1];
-
+	
 	ret = parse_ui(argv[optind + 2], &minor);
 	if(ret) goto error;
 
@@ -128,6 +128,17 @@ error:
 	return 0;
 }
 
+static int handle_setup_snap_group(int argc, char **argv){
+	unsigned int minors[2]={0,1};
+	unsigned long cache_sizes[2] = {0,0}, fallocated_spaces[2] = {0,0};
+
+
+	char *bdevs[2] = {"/dev/sda1","/dev/sda2"};
+	char *cows[2] = {"/boot/efi/.datto","/.datto"};
+
+	return dattobd_setup_snapshot_group(minors, bdevs, cows, fallocated_spaces, cache_sizes, 2);
+
+}
 static int handle_reload_snap(int argc, char **argv){
 	int ret, c;
 	unsigned int minor;
@@ -244,6 +255,21 @@ error:
 	return 0;
 }
 
+/*
+static int handle_transition_inc_group(int argc, char **argv){
+	int ret = 0;
+	unsigned int minors[2] = {0,1};
+	if(argc != 2){
+		ret = errno = EINVAL;
+		goto error;
+	}
+
+	ret = parse_ui(argv[1], &minor);
+	if(ret) goto error;
+
+	return dattobd_transition_incremental_group(minors);
+}
+*/
 static int handle_transition_snap(int argc, char **argv){
 	int ret, c;
 	unsigned int minor;
@@ -279,6 +305,15 @@ error:
 	perror("error interpreting transition to snapshot parameters");
 	print_help(-1);
 	return 0;
+}
+
+static int handle_transition_snap_group(int argc, char **argv){
+	unsigned int minors[2] = {0,1};
+	unsigned long fallocated_spaces[2] = {0,0};
+	char *cows[2] = {"/boot/efi/.datto","/.datto"};
+
+	return dattobd_transition_snapshot_group(minors, cows, fallocated_spaces,2);
+
 }
 
 static int handle_reconfigure(int argc, char **argv){
@@ -329,6 +364,8 @@ int main(int argc, char **argv){
 
 	//route to appropriate handler or print help
 	if(!strcmp(argv[1], "setup-snapshot")) ret = handle_setup_snap(argc - 1, argv + 1);
+	else if(!strcmp(argv[1], "setup-snapshot_group")) ret = handle_setup_snap_group(argc - 1, argv + 1);
+	else if(!strcmp(argv[1], "handle_transition_snap_group")) ret = handle_transition_snap_group(argc - 1, argv + 1);
 	else if(!strcmp(argv[1], "reload-snapshot")) ret = handle_reload_snap(argc - 1, argv + 1);
 	else if(!strcmp(argv[1], "reload-incremental")) ret = handle_reload_inc(argc - 1, argv + 1);
 	else if(!strcmp(argv[1], "destroy")) ret = handle_destroy(argc - 1, argv + 1);

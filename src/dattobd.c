@@ -749,7 +749,7 @@ static int dattobd_may_hook_syscalls = 1;
 static unsigned long dattobd_cow_max_memory_default = (300 * 1024 * 1024);
 static unsigned int dattobd_cow_fallocate_percentage_default = 10;
 static unsigned int dattobd_max_snap_devices = DATTOBD_DEFAULT_SNAP_DEVICES;
-static int dattobd_debug = 0;
+static int dattobd_debug = 1;
 
 module_param_named(may_hook_syscalls, dattobd_may_hook_syscalls, int, S_IRUGO);
 MODULE_PARM_DESC(may_hook_syscalls, "if true, allows the kernel module to find and alter the system call table to allow tracing to work across remounts");
@@ -957,7 +957,7 @@ static inline void tracer_set_fail_state(struct snap_device *dev, int error){
 static int copy_string_from_user(const char __user *data, char **out_ptr){
 	int ret;
 	char *str;
-
+	
 	if(!data){
 		*out_ptr = NULL;
 		return 0;
@@ -977,7 +977,6 @@ error:
 	*out_ptr = NULL;
 	return ret;
 }
-
 static int get_setup_params(const struct setup_params __user *in, unsigned int *minor, char **bdev_name, char **cow_path, unsigned long *fallocated_space, unsigned long *cache_size){
 	int ret;
 	struct setup_params params;
@@ -1128,6 +1127,296 @@ error:
 
 	*minor = 0;
 	*cache_size = 0;
+	return ret;
+}
+
+/* NaviCloudr */
+static int get_setup_params_group(const struct setup_params_group __user *in, unsigned int **minors, char ***bdev_names, char ***cow_paths, unsigned long **fallocated_spaces, unsigned long **cache_sizes, unsigned int *count){
+	int ret;
+	unsigned int i;
+	struct setup_params_group *params_group; 
+	
+	//copy the params struct
+	params_group = kmalloc(sizeof(struct setup_params_group), GFP_KERNEL | __GFP_NOWARN);
+	if(!params_group){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	ret = copy_from_user(params_group, in, sizeof(struct setup_params_group));
+        if(ret){
+                ret = -EFAULT;
+                LOG_ERROR(ret, "error copying setup_params_group struct from user space");
+                goto error;
+	}
+
+	if(params_group->count <= 0) goto error;
+
+	*count = params_group->count;
+	kfree(params_group);
+	params_group = kmalloc( sizeof(struct setup_params_group) + *count * sizeof(struct setup_params), GFP_KERNEL | __GFP_NOWARN);
+	if(!params_group){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+
+
+	ret = copy_from_user(params_group, in, sizeof(struct setup_params_group) + *count * sizeof(struct setup_params));
+        if(ret){
+                ret = -EFAULT;
+                LOG_ERROR(ret, "error copying setup_params struct from user space");
+                goto error;
+        }
+
+	/*Allocate global parameters*/
+	*bdev_names = (char**) kmalloc(*count * sizeof(char*),GFP_KERNEL | __GFP_NOWARN);
+	if(!*bdev_names){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	*cow_paths = (char**) kmalloc(*count * sizeof(char*),GFP_KERNEL | __GFP_NOWARN);
+	if(!*cow_paths){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	*minors = (unsigned int*) kmalloc(*count * sizeof(unsigned int),GFP_KERNEL | __GFP_NOWARN);
+	if(!*minors){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	*fallocated_spaces = (unsigned long*) kmalloc(*count * sizeof(unsigned long),GFP_KERNEL | __GFP_NOWARN);
+	if(!*fallocated_spaces){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	*cache_sizes = (unsigned long*) kmalloc(*count * sizeof(unsigned long),GFP_KERNEL | __GFP_NOWARN);
+	if(!*cache_sizes){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+
+	for(i = 0 ; i < *count ; ++i){
+		ret = copy_string_from_user((char __user *)params_group->setup_params[i].bdev, *bdev_names+i);
+		if(ret) goto error;
+
+		if(!(*bdev_names+i)){
+			ret = -EINVAL;
+			LOG_ERROR(ret, "NULL bdevs given");
+			goto error;
+		}
+		ret = copy_string_from_user((char __user *)params_group->setup_params[i].cow, *cow_paths+i);
+		if(ret) goto error;
+
+		if(!(*cow_paths+i)){
+			ret = -EINVAL;
+			LOG_ERROR(ret, "NULL cows given");
+			goto error;
+		}
+		*(*fallocated_spaces+i) = params_group->setup_params[i].fallocated_space;
+		*(*cache_sizes+i) = params_group->setup_params[i].cache_size;
+		*(*minors+i) = params_group->setup_params[i].minor;
+	}
+	kfree(params_group);
+	return 0;
+error:
+	LOG_ERROR(ret, "error copying setup_params_group from user space");
+	kfree(params_group);
+	for(i = 0 ; i < *count ; ++i){
+		if(*(*bdev_names+i)) kfree(*(*bdev_names+i));
+		if(*(*cow_paths+i)) kfree(*(*cow_paths+i));
+
+		*(*bdev_names+i) = NULL;
+		*(*cow_paths+i) = NULL;
+		*(*minors+i) = 0;
+		*(*fallocated_spaces+i) = 0;
+		*(*cache_sizes+i) = 0;
+	}
+	kfree(*bdev_names);
+	kfree(*cow_paths);
+	kfree(*minors);
+	kfree(*fallocated_spaces);
+	kfree(*cache_sizes);
+	*count = 0;
+	return ret;
+}
+
+static int get_reload_params_group(const struct reload_params_group __user *in, unsigned int **minors, char ***bdev_names, char ***cow_paths, unsigned long **cache_sizes, unsigned int *count){
+	int ret;
+	struct reload_params_group *params_group; 
+	unsigned int i;
+
+	//copy the params struct
+	params_group =  kmalloc(sizeof(struct reload_params_group), GFP_KERNEL | __GFP_NOWARN);
+	if(!params_group){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	ret = copy_from_user(params_group, in, sizeof(struct reload_params_group));
+        if(ret){
+                ret = -EFAULT;
+                LOG_ERROR(ret, "error copying reload_params_group struct from user space");
+                goto error;
+	}
+
+	if(params_group->count <= 0) goto error;
+
+	*count = params_group->count;
+	kfree(params_group);
+	params_group = kmalloc( sizeof(struct reload_params_group) + *count * sizeof(struct reload_params), GFP_KERNEL | __GFP_NOWARN);
+
+	if(!params_group){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+
+	ret = copy_from_user(params_group, in, sizeof(struct reload_params_group) + *count * sizeof(struct reload_params));
+        if(ret){
+                ret = -EFAULT;
+                LOG_ERROR(ret, "error copying reload_params struct from user space");
+                goto error;
+        }
+
+	*bdev_names = (char**) kmalloc(*count * sizeof(char*),GFP_KERNEL | __GFP_NOWARN);
+	if(!*bdev_names){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	*cow_paths = (char**) kmalloc(*count * sizeof(char*),GFP_KERNEL | __GFP_NOWARN);
+	if(!*cow_paths){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	*minors = (unsigned int*) kmalloc(*count * sizeof(unsigned int),GFP_KERNEL | __GFP_NOWARN);
+	if(!*minors){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	*cache_sizes = (unsigned long*) kmalloc(*count * sizeof(unsigned long),GFP_KERNEL | __GFP_NOWARN);
+	if(!*cache_sizes){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	for(i = 0 ; i < *count ; ++i){
+		ret = copy_string_from_user((char __user *)params_group->reload_params[i].bdev, *bdev_names+i);
+		if(ret) goto error;
+
+		if(!(*bdev_names+i)){
+			ret = -EINVAL;
+			LOG_ERROR(ret, "NULL bdev given");
+			goto error;
+		}
+
+		ret = copy_string_from_user((char __user *)params_group->reload_params[i].cow, *cow_paths+i);
+		if(ret) goto error;
+
+		if(!(*cow_paths+i)){
+			ret = -EINVAL;
+			LOG_ERROR(ret, "NULL cow given");
+			goto error;
+		}
+
+		*(*cache_sizes+i) = params_group->reload_params[i].cache_size;
+		*(*minors+i) = params_group->reload_params[i].minor;
+	}
+	kfree(params_group);
+	return 0;
+
+error:
+	kfree(params_group);
+	for(i = 0 ; i < *count ; ++i){
+		if(*(*bdev_names+i)) kfree(*(*bdev_names+i));
+		if(*(*cow_paths+i)) kfree(*(*cow_paths+i));
+
+		*(*bdev_names+i) = NULL;
+		*(*cow_paths+i) = NULL;
+		*(*minors+i) = 0;
+		*(*cache_sizes+i) = 0;
+	}
+	kfree(*bdev_names);
+	kfree(*cow_paths);
+	kfree(*minors);
+	kfree(*cache_sizes);
+	*count = 0;
+	return ret;
+}
+
+static int get_transition_snap_params_group(const struct transition_snap_params_group __user *in, unsigned int **minors, char ***cow_paths, unsigned long **fallocated_spaces, unsigned int *count){
+	int ret;
+	struct transition_snap_params_group *params_group;
+	unsigned int i;
+
+	//copy the params struct
+	params_group =  kmalloc(sizeof(struct transition_snap_params_group), GFP_KERNEL | __GFP_NOWARN);
+	if(!params_group){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	ret = copy_from_user(params_group, in, sizeof(struct transition_snap_params_group));
+        if(ret){
+                ret = -EFAULT;
+                LOG_ERROR(ret, "error copying transition_snap_params_group struct from user space");
+                goto error;
+	}
+
+	if(params_group->count <= 0) goto error;
+
+	*count = params_group->count;
+	kfree(params_group);
+	params_group = kmalloc( sizeof(struct transition_snap_params_group) + *count * sizeof(struct transition_snap_params), GFP_KERNEL | __GFP_NOWARN);
+	if(!params_group){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+
+	ret = copy_from_user(params_group, in, sizeof(struct transition_snap_params_group) + *count * sizeof(struct transition_snap_params));
+        if(ret){
+                ret = -EFAULT;
+                LOG_ERROR(ret, "error copying transition_snap_params_group struct from user space");
+                goto error;
+        }
+	*cow_paths = (char**) kmalloc(*count * sizeof(char*),GFP_KERNEL | __GFP_NOWARN);
+	if(!*cow_paths){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	*minors = (unsigned int*) kmalloc(*count * sizeof(unsigned int),GFP_KERNEL | __GFP_NOWARN);
+	if(!*minors){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	*fallocated_spaces = (unsigned long*) kmalloc(*count * sizeof(unsigned long),GFP_KERNEL | __GFP_NOWARN);
+	if(!*fallocated_spaces){ 
+		ret = -ENOMEM;
+		goto error;
+	};
+	for(i = 0 ; i < *count ; ++i){
+		ret = copy_string_from_user((char __user *)params_group->transition_snap_params[i].cow, *cow_paths+i);
+		if(ret) goto error;
+
+		if(!(*cow_paths+i)){
+			ret = -EINVAL;
+			LOG_ERROR(ret, "NULL cow given");
+			goto error;
+		}
+
+		*(*fallocated_spaces+i) = params_group->transition_snap_params[i].fallocated_space;
+		*(*minors+i) = params_group->transition_snap_params[i].minor;
+	}
+	kfree(params_group);
+	return 0;
+
+error:
+	LOG_ERROR(ret, "error copying transition_snap_params_group from user space");
+	for(i = 0 ; i < *count ; ++i){
+		if(*(*cow_paths+i)) kfree(*(*cow_paths+i));
+		*(*cow_paths+i) = NULL;
+		*(*minors+i) = 0;
+		*(*fallocated_spaces+i) = 0;
+	}
+	kfree(params_group);
+	kfree(*cow_paths);
+	kfree(*minors);
+	kfree(*fallocated_spaces);
+	*count = 0;
 	return ret;
 }
 
@@ -3806,6 +4095,60 @@ error:
 	return ret;
 }
 
+/*NaviCloudr*/
+static int tracer_setup_active_snap_group(struct snap_device *dev, unsigned int minor, const char *bdev_path, const char *cow_path, unsigned long fallocated_space, unsigned long cache_size){
+	int ret;
+
+	set_bit(SNAPSHOT, &dev->sd_state);
+	set_bit(ACTIVE, &dev->sd_state);
+	clear_bit(UNVERIFIED, &dev->sd_state);
+
+	//setup base device
+	ret = __tracer_setup_base_dev(dev, bdev_path);
+	if(ret) goto error;
+
+	//setup the cow manager
+	ret = __tracer_setup_cow_new(dev, dev->sd_base_dev, cow_path, dev->sd_size, fallocated_space, cache_size, NULL, 1);
+	if(ret) goto error;
+
+	//setup the cow path
+	ret = __tracer_setup_cow_path(dev, dev->sd_cow->filp);
+	if(ret) goto error;
+
+	//setup the snapshot values
+	ret = __tracer_setup_snap(dev, minor, dev->sd_base_dev, dev->sd_size);
+	if(ret) goto error;
+
+	//setup the cow thread and run it
+	ret = __tracer_setup_snap_cow_thread(dev, minor);
+	if(ret) goto error;
+
+	return 0;
+
+error:
+	LOG_ERROR(ret, "error setting up tracer as active snapshot");
+	tracer_destroy(dev);
+	return ret;
+}
+
+/*NaviCloudr*/
+static int wait_cow_completion(struct snap_device *dev,  unsigned int minor){
+	int ret;
+
+	wake_up_process(dev->sd_cow_thread);
+
+	//inject the tracing function
+	ret = __tracer_setup_tracing(dev, minor);
+	if(ret) goto error;
+
+	return 0;
+
+error:
+	LOG_ERROR(ret, "error setting up tracer as active snapshot");
+	tracer_destroy(dev);
+	return ret;
+}
+
 static int __tracer_setup_unverified(struct snap_device *dev, unsigned int minor, const char *bdev_path, const char *cow_path, unsigned long cache_size, int is_snap){
 	if(is_snap) set_bit(SNAPSHOT, &dev->sd_state);
 	else clear_bit(SNAPSHOT, &dev->sd_state);
@@ -3974,6 +4317,69 @@ error:
 	return ret;
 }
 
+static int tracer_active_inc_to_snap_group(struct snap_device **old_devs, char **cow_paths, unsigned long *fallocated_spaces, unsigned int count){
+	int ret;
+	struct snap_device *devs[count];
+	
+	unsigned int i;
+	for(i=0;i<count;++i){
+		//allocate new tracer
+		ret = tracer_alloc(&devs[i]);
+		if(ret) return ret;
+
+		set_bit(SNAPSHOT, &devs[i]->sd_state);
+		set_bit(ACTIVE, &devs[i]->sd_state);
+		clear_bit(UNVERIFIED, &devs[i]->sd_state);
+
+		fallocated_spaces[i] = (fallocated_spaces[i])? fallocated_spaces[i] : old_devs[i]->sd_falloc_size;
+
+		//copy / set fields we need
+		__tracer_copy_base_dev(old_devs[i], devs[i]);
+
+		//setup the cow manager
+		ret = __tracer_setup_cow_new(devs[i], devs[i]->sd_base_dev, cow_paths[i], devs[i]->sd_size, fallocated_spaces[i], devs[i]->sd_cache_size, old_devs[i]->sd_cow->uuid, old_devs[i]->sd_cow->seqid + 1);
+		if(ret) goto error;
+
+		//setup the cow path
+		ret = __tracer_setup_cow_path(devs[i], devs[i]->sd_cow->filp);
+		if(ret) goto error;
+
+		//setup the snapshot values
+		ret = __tracer_setup_snap(devs[i], old_devs[i]->sd_minor, devs[i]->sd_base_dev, devs[i]->sd_size);
+		if(ret) goto error;
+
+		//setup the cow thread
+		ret = __tracer_setup_snap_cow_thread(devs[i], old_devs[i]->sd_minor);
+		if(ret) goto error;
+	}
+	for(i=0;i<count;++i){
+		//start tracing (overwrites old_dev's tracing)
+		ret = __tracer_setup_tracing(devs[i], old_devs[i]->sd_minor);
+		if(ret) goto error;
+
+		//stop the old cow thread and start the new one
+		__tracer_destroy_cow_thread(old_devs[i]);
+		wake_up_process(devs[i]->sd_cow_thread);
+
+		//destroy the unneeded fields of the old_dev and the old_dev itself
+		__tracer_destroy_cow_path(old_devs[i]);
+		__tracer_destroy_cow_sync_and_free(old_devs[i]);
+		kfree(old_devs[i]);
+	}
+	return 0;
+
+error:
+	LOG_ERROR(ret, "error transitioning tracer to snapshot mode");
+	for(i=0;i<count;++i){
+		__tracer_destroy_cow_thread(devs[i]);
+		__tracer_destroy_snap(devs[i]);
+		__tracer_destroy_cow_path(devs[i]);
+		__tracer_destroy_cow_free(devs[i]);
+		kfree(devs[i]);
+	}
+	return ret;
+}
+
 static void tracer_reconfigure(struct snap_device *dev, unsigned long cache_size){
 	dev->sd_cache_size = cache_size;
 	if(!cache_size) cache_size = dattobd_cow_max_memory_default;
@@ -4110,10 +4516,79 @@ error:
 	if(dev) kfree(dev);
 	return ret;
 }
+/*Navicloudr*/
+static int __ioctl_setup_group(unsigned int *minors, char **bdev_paths, char **cow_paths, unsigned long *fallocated_spaces, unsigned long *cache_sizes, int count, int is_snap, int is_reload){
+	int ret;
+	int is_mounted[count];
+	/*array of pointers*/
+        struct snap_device *devs[count];
+	
+	unsigned int i;
+	for(i = 0; i < count ; ++i){
+		devs[i] = NULL;
+	}
+	for(i = 0; i < count ; ++i){
+		//verify that the minor number is valid
+		ret = verify_minor_available(minors[i]);
+		if(ret) goto error;
+		//check if block device is mounted
+		ret = __verify_bdev_writable(bdev_paths[i], &is_mounted[i]);
+		if(ret) goto error;
+		//check that reload / setup command matches current mount state
+		if(is_mounted[i] && is_reload){
+			ret = -EINVAL;
+			LOG_ERROR(ret, "illegal to perform reload while mounted");
+			goto error;
+		}else if(!is_mounted[i] && !is_reload){
+			ret = -EINVAL;
+			LOG_ERROR(ret, "illegal to perform setup while unmounted");
+			goto error;
+		}
+		//allocate the tracing struct
+		ret = tracer_alloc(devs+i);
+		if(ret) goto error;
+
+		//route to the appropriate setup function
+		if(is_snap){
+			if(is_mounted[i]) {
+				ret = tracer_setup_active_snap_group(devs[i], minors[i], bdev_paths[i], cow_paths[i], fallocated_spaces[i], cache_sizes[i]);
+			}
+			else ret = tracer_setup_unverified_snap(devs[i], minors[i], bdev_paths[i], cow_paths[i], cache_sizes[i]);
+		}else{
+			if(!is_mounted[i]) ret = tracer_setup_unverified_inc(devs[i], minors[i], bdev_paths[i], cow_paths[i], cache_sizes[i]);
+			else{
+				ret = -EINVAL;
+				LOG_ERROR(ret, "illegal to setup as active incremental");
+				goto error;
+			}
+		}
+		if(ret) goto error;
+	}
+	if(is_snap){
+		for(i = 0 ; i < count ; ++i){
+			if(is_mounted[i]){
+				ret = wait_cow_completion(devs[i], minors[i]);
+			}
+			if(ret) goto error;
+		}
+	}
+
+	return 0;
+
+error:
+	LOG_ERROR(ret, "error during setup ioctl handler");
+	for(i = 0; i < count ; ++i)
+		if(devs[i]) 
+			kfree(devs[i]);
+	return ret;
+}
 #define ioctl_setup_snap(minor, bdev_path, cow_path, fallocated_space, cache_size) __ioctl_setup(minor, bdev_path, cow_path, fallocated_space, cache_size, 1, 0)
 #define ioctl_reload_snap(minor, bdev_path, cow_path, cache_size) __ioctl_setup(minor, bdev_path, cow_path, 0, cache_size, 1, 1)
 #define ioctl_reload_inc(minor, bdev_path, cow_path, cache_size) __ioctl_setup(minor, bdev_path, cow_path, 0, cache_size, 0, 1)
-
+/*Navicloudr*/
+#define ioctl_setup_snap_group(minors, bdev_paths, cow_paths, fallocated_spaces, cache_sizes, count) __ioctl_setup_group(minors, bdev_paths, cow_paths, fallocated_spaces, cache_sizes, count, 1, 0)
+#define ioctl_reload_snap_group(minors, bdev_paths, cow_paths, cache_sizes, count) __ioctl_setup_group(minors, bdev_paths, cow_paths, 0, cache_sizes, count, 1, 1)
+#define ioctl_reload_inc_group(minor, bdev_path, cow_path, cache_size, count) __ioctl_setup_group(minor, bdev_path, cow_path, 0, cache_size, count, 0, 1)
 static int ioctl_destroy(unsigned int minor){
 	int ret;
 	struct snap_device *dev;
@@ -4206,6 +4681,45 @@ error:
 	return ret;
 }
 
+static int ioctl_transition_snap_group(unsigned int *minors, char **cow_paths, unsigned long *fallocated_spaces,unsigned int count){
+	int ret;
+        struct snap_device *devs[count];
+	unsigned int i;
+	for(i=0; i<count ;++i){
+		devs[i] = NULL;
+	}
+	for(i=0; i<count ;++i){
+		//verify that the minor number is valid
+		ret = verify_minor_in_use_not_busy(minors[i]);
+		if(ret) goto error;
+
+		devs[i] = snap_devices[minors[i]];
+
+		//check that the device is not in the fail state
+		if(tracer_read_fail_state(devs[i])){
+			ret = -EINVAL;
+			LOG_ERROR(ret, "device specified is in the fail state");
+			goto error;
+		}
+
+		//check that tracer is in active incremental state
+		if(test_bit(SNAPSHOT, &devs[i]->sd_state) || !test_bit(ACTIVE, &devs[i]->sd_state)){
+			ret = -EINVAL;
+			LOG_ERROR(ret, "device specified is not in active incremental mode");
+			goto error;
+		}
+
+	}
+	ret = tracer_active_inc_to_snap_group(devs, cow_paths, fallocated_spaces, count);
+	if(ret) goto error;
+
+	return 0;
+
+error:
+	LOG_ERROR(ret, "error during transition to snapshot ioctl handler");
+	return ret;
+}
+
 static int ioctl_reconfigure(unsigned int minor, unsigned long cache_size){
 	int ret;
 	struct snap_device *dev;
@@ -4268,12 +4782,20 @@ static int get_free_minor(void)
 }
 
 static long ctrl_ioctl(struct file *filp, unsigned int cmd, unsigned long arg){
+	unsigned int i;
 	int ret, idx;
 	char *bdev_path = NULL;
 	char *cow_path = NULL;
 	struct dattobd_info *info = NULL;
 	unsigned int minor = 0;
 	unsigned long fallocated_space = 0, cache_size = 0;
+	/* Navicloudr */
+	char **bdev_paths = NULL;
+	char **cow_paths = NULL;
+	unsigned int *minors = NULL;
+	unsigned long *fallocated_spaces = NULL;
+	unsigned long *cache_sizes = NULL ;
+	unsigned int count = 0;
 
 	LOG_DEBUG("ioctl command received: %d", cmd);
 	mutex_lock(&ioctl_mutex);
@@ -4391,18 +4913,68 @@ static long ctrl_ioctl(struct file *filp, unsigned int cmd, unsigned long arg){
 		}
 
 		break;
+	/* Navicloudr */
+	case IOCTL_SETUP_SNAP_GROUP:
+		//get params_group from user space
+		ret = get_setup_params_group((struct setup_params_group __user *)arg, &minors, &bdev_paths, &cow_paths, &fallocated_spaces, &cache_sizes,&count);
+		if(ret) break;
+		
+		ret = ioctl_setup_snap_group(minors, bdev_paths, cow_paths, fallocated_spaces, cache_sizes, count);
+		if(ret) break;
+
+		break;
+	/* Navicloudr */
+	case IOCTL_RELOAD_SNAP_GROUP:
+		//get params_group from user space
+		ret = get_reload_params_group((struct reload_params_group __user *)arg, &minors, &bdev_paths, &cow_paths, &cache_sizes, &count);
+		if(ret) break;
+
+		ret = ioctl_reload_snap_group(minors, bdev_paths, cow_paths, cache_sizes, count);
+		if(ret) break;
+
+		break;
+	/* Navicloudr */
+	case IOCTL_RELOAD_INC_GROUP:
+		//get params_group from user space
+		ret = get_reload_params_group((struct reload_params_group __user *)arg, &minors, &bdev_paths, &cow_paths, &cache_sizes, &count);
+		if(ret) break;
+
+		ret = ioctl_reload_inc_group(minors, bdev_paths, cow_paths, cache_sizes, count);
+		if(ret) break;
+
+		break;
+	/* Navicloudr */
+	case IOCTL_TRANSITION_SNAP_GROUP:
+		//get params_group from user space
+		ret = get_transition_snap_params_group((struct transition_snap_params_group __user *)arg, &minors, &cow_paths, &fallocated_spaces, &count);
+		if(ret) break;
+
+		ret = ioctl_transition_snap_group(minors, cow_paths, fallocated_spaces, count);
+		if(ret) break;
+
+		break;
 	default:
 		ret = -EINVAL;
 		LOG_ERROR(ret, "invalid ioctl called");
 		break;
 	}
-
+	
 	LOG_DEBUG("minor range = %u - %u", lowest_minor, highest_minor);
 	mutex_unlock(&ioctl_mutex);
 
 	if(bdev_path) kfree(bdev_path);
 	if(cow_path) kfree(cow_path);
 	if(info) kfree(info);
+	/*NaviCloudr*/
+	for(i = 0 ; i < count ; ++i){
+		if(bdev_paths && *(bdev_paths+i)) kfree(*(bdev_paths+i));
+		if(cow_paths && *(cow_paths+i)) kfree(*(cow_paths+i));
+	}
+	if(bdev_paths) kfree(bdev_paths);
+	if(cow_paths) kfree(cow_paths);
+	if(minors) kfree(minors);
+	if(fallocated_spaces) kfree(fallocated_spaces);
+	if(cache_sizes) kfree(cache_sizes);
 
 	return ret;
 }

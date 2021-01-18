@@ -25,12 +25,15 @@ struct setup_params{
 	unsigned int minor; //requested minor number of the device
 };
 
+
+
 struct reload_params{
 	char *bdev; //name of block device to snapshot
 	char *cow; //name of cow file for snapshot
 	unsigned long cache_size; //maximum cache size (in bytes)
 	unsigned int minor; //requested minor number of the device
 };
+
 
 struct transition_snap_params{
 	char *cow; //name of cow file for snapshot
@@ -43,6 +46,27 @@ struct reconfigure_params{
 	unsigned int minor; //requested minor number of the device
 };
 
+/*Navicloudr*/
+struct setup_params_group{
+	unsigned int count;
+	struct setup_params setup_params[];
+};
+
+/*struct reload_params_group{
+	unsigned int count;
+	struct reload_params reload_params[];
+};
+*/
+struct transition_snap_params_group{
+	unsigned int count;
+	struct transition_snap_params transition_snap_params[];
+};
+/*
+struct reconfigure_params_group{
+	unsigned int count;
+	struct reconfigure_params reconfigure_params[];
+};
+*/
 #define COW_UUID_SIZE 16
 #define COW_BLOCK_LOG_SIZE 12
 #define COW_BLOCK_SIZE (1 << COW_BLOCK_LOG_SIZE)
@@ -89,5 +113,10 @@ struct dattobd_info{
 #define IOCTL_RECONFIGURE _IOW(DATTO_IOCTL_MAGIC, 7, struct reconfigure_params) //in: see above
 #define IOCTL_DATTOBD_INFO _IOR(DATTO_IOCTL_MAGIC, 8, struct dattobd_info) //in: see above
 #define IOCTL_GET_FREE _IOR(DATTO_IOCTL_MAGIC, 9, int)
-
+/*NaviCloudr*/
+#define IOCTL_SETUP_SNAP_GROUP _IOW(DATTO_IOCTL_MAGIC, 10, struct setup_params_group) 
+#define IOCTL_RELOAD_SNAP_GROUP _IOW(DATTO_IOCTL_MAGIC, 11, struct reload_params_group) 
+#define IOCTL_RELOAD_INC_GROUP _IOW(DATTO_IOCTL_MAGIC, 12, struct reload_params_group) 
+#define IOCTL_TRANSITION_INC_GROUP _IOW(DATTO_IOCTL_MAGIC, 14, unsigned int)
+#define IOCTL_TRANSITION_SNAP_GROUP _IOW(DATTO_IOCTL_MAGIC, 15, struct transition_snap_params_group) 
 #endif /* DATTOBD_H_ */

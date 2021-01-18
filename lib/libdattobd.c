@@ -3,7 +3,8 @@
 /*
  * Copyright (C) 2015 Datto Inc.
  */
-
+#include <stdlib.h>
+#include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
@@ -28,6 +29,31 @@ int dattobd_setup_snapshot(unsigned int minor, char *bdev, char *cow, unsigned l
 	close(fd);
 	return ret;
 }
+int dattobd_setup_snapshot_group(unsigned int *minors, char **bdevs, char **cows, unsigned long *fallocated_spaces, unsigned long *cache_sizes,unsigned int count){
+	int fd, ret;
+	struct setup_params_group* sp;
+
+	sp = (struct setup_params_group*)malloc(sizeof(struct setup_params_group) + count * sizeof(struct setup_params));
+	if(!sp)
+		return -1;
+
+	fd = open("/dev/datto-ctl", O_RDONLY);
+	if(fd < 0) return -1;
+	sp->count = count;
+	for(int i = 0 ; i < count; ++i){
+		sp->setup_params[i].minor = minors[i];
+		sp->setup_params[i].bdev = bdevs[i];
+		sp->setup_params[i].cow = cows[i];
+		sp->setup_params[i].fallocated_space = fallocated_spaces[i];
+		sp->setup_params[i].cache_size = cache_sizes[i];
+	}
+	ret = ioctl(fd, IOCTL_SETUP_SNAP_GROUP, sp);
+
+	close(fd);
+	free(sp);
+	return ret;
+}
+
 
 int dattobd_reload_snapshot(unsigned int minor, char *bdev, char *cow, unsigned long cache_size){
 	int fd, ret;
@@ -101,6 +127,28 @@ int dattobd_transition_snapshot(unsigned int minor, char *cow, unsigned long fal
 	if(fd < 0) return -1;
 
 	ret = ioctl(fd, IOCTL_TRANSITION_SNAP, &tp);
+
+	close(fd);
+	return ret;
+}
+
+int dattobd_transition_snapshot_group(unsigned int* minors, char **cows, unsigned long *fallocated_spaces, unsigned int count){
+	int fd, ret;
+	struct transition_snap_params_group *tp;
+
+	tp = (struct transition_snap_params_group*)malloc(sizeof(struct transition_snap_params_group) + count * sizeof(struct transition_snap_params));
+	tp->count = count;
+	printf("%u\n",tp->count);
+	printf("%lu\n",sizeof(struct transition_snap_params_group) + count * sizeof(struct transition_snap_params));
+	fd = open("/dev/datto-ctl", O_RDONLY);
+	if(fd < 0) return -1;
+	for(int i = 0 ; i < count ;++i){
+		tp->transition_snap_params[i].minor = minors[i];
+		tp->transition_snap_params[i].cow = cows[i];
+		tp->transition_snap_params[i].fallocated_space = fallocated_spaces[i];
+	}
+
+	ret = ioctl(fd, IOCTL_TRANSITION_SNAP_GROUP, tp);
 
 	close(fd);
 	return ret;

@@ -15,6 +15,8 @@ extern "C" {
 
 int dattobd_setup_snapshot(unsigned int minor, char *bdev, char *cow, unsigned long fallocated_space, unsigned long cache_size);
 
+int dattobd_setup_snapshot_group(unsigned int *minors, char **bdevs, char **cows, unsigned long *fallocated_spaces, unsigned long *cache_sizes,unsigned int count);
+
 int dattobd_reload_snapshot(unsigned int minor, char *bdev, char *cow, unsigned long cache_size);
 
 int dattobd_reload_incremental(unsigned int minor, char *bdev, char *cow, unsigned long cache_size);
@@ -24,6 +26,7 @@ int dattobd_destroy(unsigned int minor);
 int dattobd_transition_incremental(unsigned int minor);
 
 int dattobd_transition_snapshot(unsigned int minor, char *cow, unsigned long fallocated_space);
+int dattobd_transition_snapshot_group(unsigned int *minors, char **cows, unsigned long *fallocated_spaces, unsigned int count);
 
 int dattobd_reconfigure(unsigned int minor, unsigned long cache_size);
 
